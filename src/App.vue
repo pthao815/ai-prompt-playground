@@ -1,34 +1,19 @@
 <template>
   <div class="min-h-screen bg-[#0d0d1a] text-gray-300 antialiased">
-
     <NavBar />
-
-    <main>
-      <HeroSection />
-
-      <div id="features">
-        <FeaturesSection />
-      </div>
-
-      <div id="social-proof">
-        <SocialProofSection />
-      </div>
-
-      <div id="faq">
-        <FaqSection />
-      </div>
-    </main>
-
-    <FooterSection />
-
+    <RouterView v-slot="{ Component }">
+      <Transition
+        enter-active-class="transition duration-200 ease-out"
+        enter-from-class="opacity-0 translate-y-2"
+        enter-to-class="opacity-100 translate-y-0"
+        mode="out-in"
+      >
+        <component :is="Component" />
+      </Transition>
+    </RouterView>
   </div>
 </template>
 
 <script setup lang="ts">
 import NavBar from './components/NavBar.vue'
-import HeroSection from './components/HeroSection.vue'
-import FeaturesSection from './components/FeaturesSection.vue'
-import SocialProofSection from './components/SocialProofSection.vue'
-import FaqSection from './components/FaqSection.vue'
-import FooterSection from './components/FooterSection.vue'
 </script>
