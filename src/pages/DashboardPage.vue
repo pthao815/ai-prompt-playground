@@ -54,7 +54,7 @@
             <h2 class="text-white font-semibold">Prompt Playground</h2>
             <div class="flex items-center gap-2">
               <select
-                v-model="selectedModel"
+                v-model="playground.selectedModel"
                 class="text-xs text-gray-300 bg-[#0d0d1a] border border-[#2a2a3e]
                        rounded-lg px-3 py-1.5 outline-none focus:border-purple-500/50
                        cursor-pointer"
@@ -72,7 +72,7 @@
                 Your Prompt
               </label>
               <textarea
-                v-model="prompt"
+                v-model="playground.prompt"
                 rows="5"
                 placeholder="Write a prompt and hit Run to see the magic…"
                 class="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-gray-600
@@ -84,23 +84,23 @@
 
             <div class="flex items-center justify-between">
               <p class="text-xs text-gray-600">
-                {{ prompt.length }} chars
-                · ~{{ Math.ceil(prompt.length / 4) }} tokens
+                {{ playground.prompt.length }} chars
+                · ~{{ playground.tokenCount }} tokens
               </p>
               <button
                 type="button"
-                :disabled="!prompt.trim() || running"
+                :disabled="!playground.canGenerate"
                 class="flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-semibold
                        text-white bg-purple-600 hover:bg-purple-500
                        disabled:opacity-50 disabled:cursor-not-allowed
                        transition-colors duration-200 cursor-pointer"
-                @click="runPrompt"
+                @click="playground.generate"
               >
-                <svg v-if="running" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                <svg v-if="playground.isRunning" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
                   <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
                   <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                 </svg>
-                {{ running ? 'Running…' : '▶ Run' }}
+                {{ playground.isRunning ? 'Running…' : '▶ Run' }}
               </button>
             </div>
 
@@ -110,12 +110,12 @@
               enter-from-class="opacity-0 translate-y-2"
               enter-to-class="opacity-100 translate-y-0"
             >
-              <div v-if="output" class="mt-2">
+              <div v-if="playground.output" class="mt-2">
                 <label class="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">
                   Output
                 </label>
                 <div class="relative px-4 py-4 rounded-xl bg-[#0d0d1a] border border-[#2a2a3e]">
-                  <p class="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">{{ output }}</p>
+                  <p class="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">{{ playground.output }}</p>
                   <button
                     type="button"
                     class="absolute top-3 right-3 text-xs text-gray-600 hover:text-gray-400
@@ -145,7 +145,7 @@
                        border border-[#2a2a3e] hover:border-purple-500/30
                        hover:bg-purple-500/5 text-gray-300 hover:text-white
                        transition-all duration-200 cursor-pointer group"
-                @click="prompt = template.prompt"
+                @click="playground.prompt = template.prompt"
               >
                 <span class="mr-2">{{ template.icon }}</span>
                 {{ template.label }}
@@ -200,22 +200,14 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { usePlaygroundStore, MODELS } from '../stores/playground'
 
 const router = useRouter()
 const auth = useAuthStore()
+const playground = usePlaygroundStore()
 
-const prompt = ref('')
-const output = ref('')
-const running = ref(false)
+const models = MODELS
 const copied = ref(false)
-const selectedModel = ref('gpt-4o')
-
-const models = [
-  { label: 'GPT-4o', value: 'gpt-4o' },
-  { label: 'Claude 3.5 Sonnet', value: 'claude-3-5-sonnet' },
-  { label: 'Gemini 1.5 Pro', value: 'gemini-1.5-pro' },
-  { label: 'Mistral Large', value: 'mistral-large' },
-]
 
 const dashboardStats = [
   { label: 'Prompts run this month', value: '15' },
@@ -242,23 +234,13 @@ const promptTemplates = [
   },
   {
     icon: '🧠',
-    label: 'Explain like I\'m 5',
+    label: "Explain like I'm 5",
     prompt: 'Explain [complex topic] to a 5-year-old using a simple analogy, short sentences, and no jargon. Make it memorable and fun.',
   },
 ]
 
-// Simulated prompt run (replace with real API call)
-async function runPrompt() {
-  running.value = true
-  output.value = ''
-  await new Promise((r) => setTimeout(r, 1200))
-
-  output.value = `[Simulated output from ${models.find(m => m.value === selectedModel.value)?.label}]\n\nThis is where your AI-generated response would appear. Connect your API key in Settings to enable live model calls.\n\nYour prompt was ${prompt.value.length} characters (~${Math.ceil(prompt.value.length / 4)} tokens).`
-  running.value = false
-}
-
 async function copyOutput() {
-  await navigator.clipboard.writeText(output.value)
+  await navigator.clipboard.writeText(playground.output)
   copied.value = true
   setTimeout(() => (copied.value = false), 2000)
 }

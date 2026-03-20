@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { apiGenerate, apiGetHistory, apiClearHistory } from '../api/playground.api'
 
 export type Role = 'user' | 'assistant' | 'system'
 
@@ -25,37 +26,7 @@ export const ROLES: { label: string; value: Role; description: string }[] = [
   { label: 'System', value: 'system', description: "Set the AI's behavior and context" },
 ]
 
-const STORAGE_KEY = 'promptlab_history'
 const MAX_HISTORY = 50
-
-export function generateFakeResponse(prompt: string, role: Role, modelLabel: string): string {
-  const p = prompt.trim()
-  const tokens = Math.ceil(p.length / 4)
-  const prefix = `[${modelLabel}]`
-
-  const isCode = /\b(code|function|debug|bug|class|implement|algorithm|typescript|javascript|python)\b/i.test(p)
-  const isWrite = /\b(write|blog|email|essay|article|summary|outline|letter)\b/i.test(p)
-
-  let body: string
-  if (p.length < 20) {
-    body = 'Could you provide more detail? Your prompt seems quite brief.'
-  } else if (isCode) {
-    body = `Here's a solution based on your request:\n\n\`\`\`typescript\n// Generated for: "${p.slice(0, 40)}"\nfunction solution() {\n  // implementation\n  return result\n}\n\`\`\`\n\nThis follows best practices and is optimized for readability.`
-  } else if (isWrite) {
-    body = `Here's the content you requested:\n\n**Introduction:** This piece addresses the core theme of your prompt with clarity.\n\n**Main Body:** Key insights explored in depth with actionable examples.\n\n**Conclusion:** A compelling call-to-action that drives meaningful results.`
-  } else {
-    body = `Based on your ${p.length}-character prompt (~${tokens} tokens), here is a detailed response:\n\nThis addresses the key aspects of what you've asked. The model has analyzed your input and generated relevant content for your use case.\n\nFeel free to refine your prompt for more specific results.`
-  }
-
-  switch (role) {
-    case 'system':
-      return `${prefix} System context acknowledged. Operating under:\n\n${body}\n\nAll subsequent responses will adhere to these guidelines.`
-    case 'assistant':
-      return `${prefix} Responding as assistant:\n\n${body}`
-    default:
-      return `${prefix} ${body}`
-  }
-}
 
 export const usePlaygroundStore = defineStore('playground', () => {
   const prompt = ref('')
@@ -63,9 +34,7 @@ export const usePlaygroundStore = defineStore('playground', () => {
   const selectedModel = ref('gpt-4o')
   const isRunning = ref(false)
   const output = ref('')
-  const history = ref<HistoryItem[]>(
-    JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]'),
-  )
+  const history = ref<HistoryItem[]>([])
 
   const tokenCount = computed(() => Math.ceil(prompt.value.length / 4))
   const canGenerate = computed(() => prompt.value.trim().length > 0 && !isRunning.value)
@@ -74,25 +43,19 @@ export const usePlaygroundStore = defineStore('playground', () => {
     if (!canGenerate.value) return
     isRunning.value = true
     output.value = ''
-
-    await new Promise<void>((r) => setTimeout(r, 1200))
-
-    const modelLabel = MODELS.find((m) => m.value === selectedModel.value)?.label ?? selectedModel.value
-    output.value = generateFakeResponse(prompt.value, selectedRole.value, modelLabel)
-
-    const item: HistoryItem = {
-      id: crypto.randomUUID(),
-      prompt: prompt.value,
-      role: selectedRole.value,
-      model: selectedModel.value,
-      output: output.value,
-      timestamp: Date.now(),
+    try {
+      const result = await apiGenerate(prompt.value, selectedRole.value, selectedModel.value)
+      output.value = result.output
+      history.value.unshift(result.historyItem)
+      if (history.value.length > MAX_HISTORY) history.value.length = MAX_HISTORY
+    } finally {
+      isRunning.value = false
     }
-    history.value.unshift(item)
-    if (history.value.length > MAX_HISTORY) history.value.length = MAX_HISTORY
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(history.value))
+  }
 
-    isRunning.value = false
+  async function fetchHistory(): Promise<void> {
+    const { items } = await apiGetHistory(MAX_HISTORY)
+    history.value = items
   }
 
   function loadFromHistory(item: HistoryItem): void {
@@ -102,9 +65,9 @@ export const usePlaygroundStore = defineStore('playground', () => {
     output.value = item.output
   }
 
-  function clearHistory(): void {
+  async function clearHistory(): Promise<void> {
+    await apiClearHistory()
     history.value = []
-    localStorage.removeItem(STORAGE_KEY)
   }
 
   return {
@@ -117,6 +80,7 @@ export const usePlaygroundStore = defineStore('playground', () => {
     tokenCount,
     canGenerate,
     generate,
+    fetchHistory,
     loadFromHistory,
     clearHistory,
   }

@@ -1,38 +1,40 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
-import { usePlaygroundStore, generateFakeResponse, MODELS, ROLES } from '../stores/playground'
+import { usePlaygroundStore, MODELS, ROLES } from '../stores/playground'
 
-describe('generateFakeResponse', () => {
-  it('returns brief-prompt message when prompt is too short', () => {
-    const result = generateFakeResponse('hi', 'user', 'GPT-4o')
-    expect(result).toContain('more detail')
-  })
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-  it('generates code response for code-related prompts', () => {
-    const result = generateFakeResponse('Write a typescript function to reverse a string', 'user', 'GPT-4o')
-    expect(result).toContain('```typescript')
-  })
+const baseHistoryItem = {
+  id: 'test-id',
+  prompt: '',
+  role: 'user' as const,
+  model: 'gpt-4o',
+  output: 'Mock AI response',
+  timestamp: Date.now(),
+}
 
-  it('generates writing response for writing-related prompts', () => {
-    const result = generateFakeResponse('Write a blog post about AI tools for developers', 'user', 'GPT-4o')
-    expect(result).toContain('Introduction')
-  })
+function stubFetchGenerate(output = 'Mock AI response', prompt = '') {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        output,
+        historyItem: { ...baseHistoryItem, prompt, output },
+      }),
+    }),
+  )
+}
 
-  it('includes model label in prefix', () => {
-    const result = generateFakeResponse('Tell me something interesting about space exploration', 'user', 'Claude 3.5 Sonnet')
-    expect(result).toContain('[Claude 3.5 Sonnet]')
-  })
+function stubFetch204() {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({ ok: true, status: 204, json: async () => undefined }),
+  )
+}
 
-  it('prefixes system role responses with system context message', () => {
-    const result = generateFakeResponse('You are a helpful assistant that only speaks in rhymes', 'system', 'GPT-4o')
-    expect(result).toContain('System context acknowledged')
-  })
-
-  it('prefixes assistant role responses appropriately', () => {
-    const result = generateFakeResponse('Respond to the previous message about quantum computing', 'assistant', 'GPT-4o')
-    expect(result).toContain('Responding as assistant')
-  })
-})
+// ─── MODELS ──────────────────────────────────────────────────────────────────
 
 describe('MODELS constant', () => {
   it('contains expected model entries', () => {
@@ -41,6 +43,8 @@ describe('MODELS constant', () => {
     expect(MODELS.length).toBeGreaterThanOrEqual(4)
   })
 })
+
+// ─── ROLES ───────────────────────────────────────────────────────────────────
 
 describe('ROLES constant', () => {
   it('contains user, assistant, and system roles', () => {
@@ -57,10 +61,17 @@ describe('ROLES constant', () => {
   })
 })
 
+// ─── usePlaygroundStore ───────────────────────────────────────────────────────
+
 describe('usePlaygroundStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     localStorage.clear()
+    stubFetchGenerate()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
   })
 
   it('initializes with empty prompt and default model/role', () => {
@@ -97,50 +108,68 @@ describe('usePlaygroundStore', () => {
     expect(store.canGenerate).toBe(true)
   })
 
-  it('canGenerate is false while running', async () => {
+  it('canGenerate is false while a request is in flight', async () => {
     const store = usePlaygroundStore()
     store.prompt = 'Tell me about Mars'
-    vi.useFakeTimers()
+
+    let resolveFetch!: (value: unknown) => void
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockReturnValue(new Promise((r) => { resolveFetch = r })),
+    )
+
     const genPromise = store.generate()
     expect(store.canGenerate).toBe(false)
-    vi.runAllTimersAsync()
+
+    resolveFetch({
+      ok: true,
+      status: 200,
+      json: async () => ({ output: 'done', historyItem: { ...baseHistoryItem } }),
+    })
     await genPromise
-    vi.useRealTimers()
   })
 
   it('generate sets isRunning true then false', async () => {
     const store = usePlaygroundStore()
-    store.prompt = 'Explain machine learning to me in simple terms'
-    vi.useFakeTimers()
+    store.prompt = 'Explain machine learning in simple terms'
+
+    let resolveFetch!: (value: unknown) => void
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockReturnValue(new Promise((r) => { resolveFetch = r })),
+    )
+
     const genPromise = store.generate()
     expect(store.isRunning).toBe(true)
-    await vi.runAllTimersAsync()
+
+    resolveFetch({
+      ok: true,
+      status: 200,
+      json: async () => ({ output: 'done', historyItem: { ...baseHistoryItem } }),
+    })
     await genPromise
     expect(store.isRunning).toBe(false)
-    vi.useRealTimers()
   })
 
   it('generate populates output after completion', async () => {
     const store = usePlaygroundStore()
-    store.prompt = 'Explain machine learning to me in simple terms'
-    vi.useFakeTimers()
-    const genPromise = store.generate()
-    await vi.runAllTimersAsync()
-    await genPromise
-    expect(store.output.length).toBeGreaterThan(0)
-    vi.useRealTimers()
+    store.prompt = 'Explain machine learning in simple terms'
+    stubFetchGenerate('AI generated response', store.prompt)
+
+    await store.generate()
+
+    expect(store.output).toBe('AI generated response')
   })
 
   it('generate adds entry to history', async () => {
     const store = usePlaygroundStore()
-    store.prompt = 'Explain machine learning to me in simple terms'
-    vi.useFakeTimers()
-    const genPromise = store.generate()
-    await vi.runAllTimersAsync()
-    await genPromise
+    store.prompt = 'Explain machine learning in simple terms'
+    stubFetchGenerate('response', store.prompt)
+
+    await store.generate()
+
     expect(store.history.length).toBe(1)
-    expect(store.history[0].prompt).toBe('Explain machine learning to me in simple terms')
-    vi.useRealTimers()
+    expect(store.history[0].prompt).toBe('Explain machine learning in simple terms')
   })
 
   it('generate does not run when prompt is empty', async () => {
@@ -151,82 +180,99 @@ describe('usePlaygroundStore', () => {
     expect(store.output).toBe('')
   })
 
-  it('history entry records role, model, and timestamp', async () => {
+  it('history entry records role, model, and timestamp from server response', async () => {
     const store = usePlaygroundStore()
-    store.prompt = 'Describe the theory of relativity in simple terms'
+    store.prompt = 'Describe the theory of relativity'
     store.selectedRole = 'system'
     store.selectedModel = 'claude-3-5-sonnet'
-    vi.useFakeTimers()
-    const genPromise = store.generate()
-    await vi.runAllTimersAsync()
-    await genPromise
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          output: 'response',
+          historyItem: {
+            id: 'srv-id',
+            prompt: store.prompt,
+            role: 'system',
+            model: 'claude-3-5-sonnet',
+            output: 'response',
+            timestamp: 1234567890,
+          },
+        }),
+      }),
+    )
+
+    await store.generate()
+
     const item = store.history[0]
     expect(item.role).toBe('system')
     expect(item.model).toBe('claude-3-5-sonnet')
-    expect(item.timestamp).toBeGreaterThan(0)
-    vi.useRealTimers()
-  })
-
-  it('persists history to localStorage after generate', async () => {
-    const store = usePlaygroundStore()
-    store.prompt = 'Describe the history of the Roman Empire'
-    vi.useFakeTimers()
-    const genPromise = store.generate()
-    await vi.runAllTimersAsync()
-    await genPromise
-    const saved = JSON.parse(localStorage.getItem('promptlab_history') ?? '[]')
-    expect(saved.length).toBe(1)
-    vi.useRealTimers()
+    expect(item.timestamp).toBe(1234567890)
   })
 
   it('loadFromHistory restores prompt, role, model, and output', () => {
     const store = usePlaygroundStore()
-    const item = {
+    store.loadFromHistory({
       id: 'test-1',
       prompt: 'A test prompt',
-      role: 'assistant' as const,
+      role: 'assistant',
       model: 'gemini-1.5-pro',
       output: 'A test output',
       timestamp: Date.now(),
-    }
-    store.loadFromHistory(item)
+    })
     expect(store.prompt).toBe('A test prompt')
     expect(store.selectedRole).toBe('assistant')
     expect(store.selectedModel).toBe('gemini-1.5-pro')
     expect(store.output).toBe('A test output')
   })
 
-  it('clearHistory empties history and removes localStorage key', async () => {
+  it('clearHistory empties history array', async () => {
     const store = usePlaygroundStore()
-    store.prompt = 'Some prompt to generate content from'
-    vi.useFakeTimers()
-    const genPromise = store.generate()
-    await vi.runAllTimersAsync()
-    await genPromise
-    vi.useRealTimers()
-
+    store.prompt = 'Some prompt'
+    stubFetchGenerate('response', store.prompt)
+    await store.generate()
     expect(store.history.length).toBe(1)
-    store.clearHistory()
+
+    stubFetch204()
+    await store.clearHistory()
     expect(store.history.length).toBe(0)
-    expect(localStorage.getItem('promptlab_history')).toBeNull()
   })
 
-  it('history is prepended (newest first)', async () => {
+  it('history is prepended — newest entry first', async () => {
     const store = usePlaygroundStore()
-    vi.useFakeTimers()
 
     store.prompt = 'First prompt about artificial intelligence'
-    const p1 = store.generate()
-    await vi.runAllTimersAsync()
-    await p1
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          output: 'r1',
+          historyItem: { ...baseHistoryItem, id: 'id-1', prompt: store.prompt },
+        }),
+      }),
+    )
+    await store.generate()
 
     store.prompt = 'Second prompt about machine learning models'
-    const p2 = store.generate()
-    await vi.runAllTimersAsync()
-    await p2
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          output: 'r2',
+          historyItem: { ...baseHistoryItem, id: 'id-2', prompt: store.prompt },
+        }),
+      }),
+    )
+    await store.generate()
 
     expect(store.history[0].prompt).toBe('Second prompt about machine learning models')
     expect(store.history[1].prompt).toBe('First prompt about artificial intelligence')
-    vi.useRealTimers()
   })
 })
